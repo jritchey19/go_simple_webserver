@@ -29,6 +29,7 @@ var counter atomic.Int64
 var mu sync.RWMutex
 
 var (
+	ErrBadRequest   = errors.New("bad request")
 	ErrBadId        = errors.New("bad or missing id")
 	ErrNotFound     = errors.New("user not found")
 	ErrMalformed    = errors.New("malformed data")
@@ -39,7 +40,7 @@ func getID(r string) (int64, error) {
 
 	id,err := strconv.ParseInt(r,10,64)
 	if err != nil {
-		return 0, errors.New("Bad request.")
+		return 0, ErrBadRequest
 	}
 
 	return id, nil
@@ -54,7 +55,7 @@ func getRecord(r *http.Request) (User, error) {
 		}
 
 		if len(record.Name) == 0 || len(record.Email) == 0 {
-			return record, errors.New("Missing Input")
+			return record, ErrMissingInfo
 		} 
 
 		return record, nil
@@ -178,10 +179,17 @@ func getUserHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func replaceUserHandler(w http.ResponseWriter, r *http.Request) {
-	id, err := getID(r.PathValue("id"))
+	user, err := returnUser(r)
 	if err != nil {
-		errorReturn(w, err, http.StatusBadRequest, "Bad Request", "Bad or missing ID")
-		fmt.Println("Got bad request.")
+		if errors.Is(err, ErrBadId) {
+		  errorReturn(w, err, http.StatusBadRequest, "Bad Request", "Bad or missing ID.")
+		  fmt.Println("Got bad request.")
+		} else if errors.Is(err, ErrNotFound) {
+		  errorReturn(w, err, http.StatusNotFound, "User not found", "User not found.")
+		  fmt.Println("User not found.")
+		} else {
+			errorReturn(w, err, http.StatusInternalServerError, "Server Error", "Internal server error.")
+		}
 		return
 	}
 
@@ -191,23 +199,16 @@ func replaceUserHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("Malformed record.")
 		return
 	}
-	record.Id = id
-
-	_, err = getUser(id)
-	if err != nil {
-		errorReturn(w, nil, http.StatusNotFound, "User not found", "User not found.")
-		fmt.Println("User not found.")
-		return
-	}
+	record.Id = user.Id
 
 	mu.Lock()
 	defer mu.Unlock()
-	users[id] = record
+	users[user.Id] = record
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(users[id])
-	fmt.Println("Replaced user: ", users[id])
+	json.NewEncoder(w).Encode(users[user.Id])
+	fmt.Println("Replaced user: ", users[user.Id])
 }
 
 func deleteUserHandler(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"errors"
 	"net/http"
 	"encoding/json"
 	"strconv"
@@ -26,6 +27,43 @@ type ResponseData struct {
 var users = make(map[int64]User)
 var counter atomic.Int64
 var mu sync.RWMutex
+
+func getID(r string) (int64, error) {
+
+	id,err := strconv.ParseInt(r,10,64)
+	if err != nil {
+		return 0, errors.New("Bad request.")
+	}
+
+	return id, nil
+}
+
+func getRecord(r *http.Request) (User, error) {
+		var record User
+		err := json.NewDecoder(r.Body).Decode(&record)
+
+		if err != nil {
+			return record, errors.New("Malformed payload")
+		}
+
+		if len(record.Name) == 0 || len(record.Email) == 0 {
+			return record, errors.New("Missing Input")
+		} 
+
+		return record, nil
+}
+
+func getUser(id int64) (User, error) {
+	mu.RLock()
+	defer mu.RUnlock()
+
+	user, ok := users[id]
+	if !ok {
+		return user, errors.New("User not found")
+	}
+
+	return user, nil
+}
 
 func homeHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
@@ -52,7 +90,6 @@ func errorReturn(w http.ResponseWriter, err error, status int, headerStatus stri
 
 func apiHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		id := counter.Add(1)
 		var record User
 		err := json.NewDecoder(r.Body).Decode(&record)
 
@@ -69,6 +106,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 
+		id := counter.Add(1)
 		record.Id = id
 		users[id] = record
 
@@ -98,18 +136,17 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getUserHandler(w http.ResponseWriter, r *http.Request) {
-	id,err := strconv.ParseInt(r.PathValue("id"),10,64)
+	id, err := getID(r.PathValue("id"))
 	if err != nil {
-		errorReturn(w, err, http.StatusBadRequest,"Bad Request","Bad or wrong id request.")
+		errorReturn(w, err, http.StatusBadRequest, "Bad Request", "Bad or missing ID")
+		fmt.Println("Got bad request.")
 		return
 	}
 
-	mu.RLock()
-	defer mu.RUnlock()
-
-	user, ok := users[id]
-	if !ok {
-		errorReturn(w, nil, http.StatusNotFound, "User Not Found", "User Not Found.")
+	user, err := getUser(id)
+	if err != nil {
+		errorReturn(w, nil, http.StatusNotFound, "User not found", "User not found.")
+		fmt.Println("User not found.")
 		return
 	}
 
@@ -118,6 +155,39 @@ func getUserHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(user)
 	fmt.Println("Returned user:",user)
 
+}
+
+func replaceUserHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := getID(r.PathValue("id"))
+	if err != nil {
+		errorReturn(w, err, http.StatusBadRequest, "Bad Request", "Bad or missing ID")
+		fmt.Println("Got bad request.")
+		return
+	}
+
+	record, err := getRecord(r)
+	if err != nil {
+		errorReturn(w, err, http.StatusBadRequest, "Malformed record", "Malformed record.")
+		fmt.Println("Malformed record.")
+		return
+	}
+	record.Id = id
+
+	_, err = getUser(id)
+	if err != nil {
+		errorReturn(w, nil, http.StatusNotFound, "User not found", "User not found.")
+		fmt.Println("User not found.")
+		return
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	users[id] = record
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(users[id])
+	fmt.Println("Replaced user: ", users[id])
 }
 
 func aboutHandler(w http.ResponseWriter, r *http.Request) {
@@ -132,6 +202,8 @@ func main() {
 	mux.HandleFunc("GET /about", aboutHandler)
 	mux.HandleFunc("/api/data", apiHandler)
 	mux.HandleFunc("GET /api/data/{id}", getUserHandler)
+	mux.HandleFunc("PUT /api/data/{id}", replaceUserHandler)
+	mux.HandleFunc("DELETE /api/data/{id}", deleteUserHandler)
 
 	fmt.Println("Server starting on http://localhost:8080")
 	err := http.ListenAndServe(":8080", mux)

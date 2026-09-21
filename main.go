@@ -190,6 +190,30 @@ func replaceUserHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Replaced user: ", users[id])
 }
 
+func deleteUserHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := getID(r.PathValue("id"))
+	if err != nil {
+		errorReturn(w, err, http.StatusBadRequest, "Bad Request", "Bad or missing ID")
+		fmt.Println("Got bad request.")
+		return
+	}
+
+	user, err := getUser(id)
+	if err != nil {
+		errorReturn(w, nil, http.StatusNotFound, "User not found", "User not found.")
+		fmt.Println("User not found.")
+		return
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	delete(users,id)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNoContent)
+	fmt.Println("Deleted user: ", user.Name)
+}
+
 func aboutHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 	fmt.Fprintln(w, "<html><body><h1>Welcome to my shop!</h1><h2>Let me cut your Mop!</h2><br><b>This is the about page of my terrible web server</b></body></html>")

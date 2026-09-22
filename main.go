@@ -20,19 +20,50 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
-type ResponseData struct {
-	Message string `json:"message"`
-}
-
 var users = make(map[int64]User)
 var counter atomic.Int64
 var mu sync.RWMutex
+
+var (
+	ErrBadRequest   = errors.New("bad request")
+	ErrBadId        = errors.New("bad or missing id")
+	ErrNotFound     = errors.New("user not found")
+	ErrMalformed    = errors.New("malformed data")
+	ErrMissingInfo  = errors.New("missing input")
+)
+
+func handleUserError(w http.ResponseWriter, err error) bool {
+
+	if err != nil {
+		if errors.Is(err, ErrBadId) {
+		  errorReturn(w, err, http.StatusBadRequest, "Bad/missing id", "Bad or missing ID.")
+		  fmt.Println("Got bad or missing id.")
+		} else if errors.Is(err, ErrNotFound) {
+		  errorReturn(w, err, http.StatusNotFound, "User not found", "User not found.")
+		  fmt.Println("User is not found.")
+		} else if errors.Is(err, ErrMalformed) {
+			errorReturn(w, err, http.StatusBadRequest, "Invalid input", "Malformed record.")
+		  fmt.Println("Recieved malformed record.")
+		} else if errors.Is(err, ErrMissingInfo) {
+			errorReturn(w, err, http.StatusBadRequest, "Missing Input", "Name and Email are required.")
+			fmt.Println("Name and/or Email is missing. Missing Input.")
+		} else if errors.Is(err, ErrBadRequest) {
+			errorReturn(w, err, http.StatusBadRequest, "Bad Request", "Bad Request.")
+			fmt.Println("Bad request recieved.")
+		} else {
+			errorReturn(w, err, http.StatusInternalServerError, "Server Error", "Internal server error.")
+		}
+		return true
+	}
+
+	return false
+}
 
 func getID(r string) (int64, error) {
 
 	id,err := strconv.ParseInt(r,10,64)
 	if err != nil {
-		return 0, errors.New("Bad request.")
+		return 0, ErrBadRequest
 	}
 
 	return id, nil
@@ -43,11 +74,11 @@ func getRecord(r *http.Request) (User, error) {
 		err := json.NewDecoder(r.Body).Decode(&record)
 
 		if err != nil {
-			return record, errors.New("Malformed payload")
+			return record, ErrMalformed
 		}
 
 		if len(record.Name) == 0 || len(record.Email) == 0 {
-			return record, errors.New("Missing Input")
+			return record, ErrMissingInfo
 		} 
 
 		return record, nil
@@ -59,7 +90,21 @@ func getUser(id int64) (User, error) {
 
 	user, ok := users[id]
 	if !ok {
-		return user, errors.New("User not found")
+		return User{}, ErrNotFound
+	}
+
+	return user, nil
+}
+
+func returnUser(r *http.Request) (User, error) {
+  id, err := getID(r.PathValue("id"))
+	if err != nil {
+		return User{}, ErrBadId
+	}
+
+	user, err := getUser(id)
+	if err != nil {
+		return User{}, ErrNotFound
 	}
 
 	return user, nil
@@ -93,10 +138,9 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 		var record User
 		err := json.NewDecoder(r.Body).Decode(&record)
 
-		if err != nil {
-			errorReturn(w, err, http.StatusBadRequest, "Invalid Input", "Malformed payload.")
-			return
-		}
+	  if handleUserError(w, err) {
+		  return
+	  }
 
 		if len(record.Name) == 0 || len(record.Email) == 0 {
 			errorReturn(w, nil, http.StatusBadRequest, "Missing Input", "Name and Email are required.")
@@ -136,17 +180,8 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getUserHandler(w http.ResponseWriter, r *http.Request) {
-	id, err := getID(r.PathValue("id"))
-	if err != nil {
-		errorReturn(w, err, http.StatusBadRequest, "Bad Request", "Bad or missing ID")
-		fmt.Println("Got bad request.")
-		return
-	}
-
-	user, err := getUser(id)
-	if err != nil {
-		errorReturn(w, nil, http.StatusNotFound, "User not found", "User not found.")
-		fmt.Println("User not found.")
+	user, err := returnUser(r)
+	if handleUserError(w, err) {
 		return
 	}
 
@@ -154,14 +189,11 @@ func getUserHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(user)
 	fmt.Println("Returned user:",user)
-
 }
 
 func replaceUserHandler(w http.ResponseWriter, r *http.Request) {
-	id, err := getID(r.PathValue("id"))
-	if err != nil {
-		errorReturn(w, err, http.StatusBadRequest, "Bad Request", "Bad or missing ID")
-		fmt.Println("Got bad request.")
+	user, err := returnUser(r)
+	if handleUserError(w, err) {
 		return
 	}
 
@@ -171,45 +203,28 @@ func replaceUserHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("Malformed record.")
 		return
 	}
-	record.Id = id
-
-	_, err = getUser(id)
-	if err != nil {
-		errorReturn(w, nil, http.StatusNotFound, "User not found", "User not found.")
-		fmt.Println("User not found.")
-		return
-	}
+	record.Id = user.Id
 
 	mu.Lock()
 	defer mu.Unlock()
-	users[id] = record
+	users[user.Id] = record
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(users[id])
-	fmt.Println("Replaced user: ", users[id])
+	json.NewEncoder(w).Encode(users[user.Id])
+	fmt.Println("Replaced user: ", users[user.Id])
 }
 
 func deleteUserHandler(w http.ResponseWriter, r *http.Request) {
-	id, err := getID(r.PathValue("id"))
-	if err != nil {
-		errorReturn(w, err, http.StatusBadRequest, "Bad Request", "Bad or missing ID")
-		fmt.Println("Got bad request.")
-		return
-	}
-
-	user, err := getUser(id)
-	if err != nil {
-		errorReturn(w, nil, http.StatusNotFound, "User not found", "User not found.")
-		fmt.Println("User not found.")
+	user, err := returnUser(r)
+	if handleUserError(w, err) {
 		return
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
-	delete(users,id)
+	delete(users,user.Id)
 
-	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNoContent)
 	fmt.Println("Deleted user: ", user.Name)
 }

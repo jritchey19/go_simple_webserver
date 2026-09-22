@@ -20,10 +20,6 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
-type ResponseData struct {
-	Message string `json:"message"`
-}
-
 var users = make(map[int64]User)
 var counter atomic.Int64
 var mu sync.RWMutex
@@ -35,6 +31,33 @@ var (
 	ErrMalformed    = errors.New("malformed data")
 	ErrMissingInfo  = errors.New("missing input")
 )
+
+func handleUserError(w http.ResponseWriter, err error) bool {
+
+	if err != nil {
+		if errors.Is(err, ErrBadId) {
+		  errorReturn(w, err, http.StatusBadRequest, "Bad/missing id", "Bad or missing ID.")
+		  fmt.Println("Got bad or missing id.")
+		} else if errors.Is(err, ErrNotFound) {
+		  errorReturn(w, err, http.StatusNotFound, "User not found", "User not found.")
+		  fmt.Println("User is not found.")
+		} else if errors.Is(err, ErrMalformed) {
+			errorReturn(w, err, http.StatusBadRequest, "Invalid input", "Malformed record.")
+		  fmt.Println("Recieved malformed record.")
+		} else if errors.Is(err, ErrMissingInfo) {
+			errorReturn(w, err, http.StatusBadRequest, "Missing Input", "Name and Email are required.")
+			fmt.Println("Name and/or Email is missing. Missing Input.")
+		} else if errors.Is(err, ErrBadRequest) {
+			errorReturn(w, err, http.StatusBadRequest, "Bad Request", "Bad Request.")
+			fmt.Println("Bad request recieved.")
+		} else {
+			errorReturn(w, err, http.StatusInternalServerError, "Server Error", "Internal server error.")
+		}
+		return true
+	}
+
+	return false
+}
 
 func getID(r string) (int64, error) {
 
@@ -115,10 +138,9 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 		var record User
 		err := json.NewDecoder(r.Body).Decode(&record)
 
-		if err != nil {
-			errorReturn(w, err, http.StatusBadRequest, "Invalid Input", "Malformed payload.")
-			return
-		}
+	  if handleUserError(w, err) {
+		  return
+	  }
 
 		if len(record.Name) == 0 || len(record.Email) == 0 {
 			errorReturn(w, nil, http.StatusBadRequest, "Missing Input", "Name and Email are required.")
@@ -159,16 +181,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 
 func getUserHandler(w http.ResponseWriter, r *http.Request) {
 	user, err := returnUser(r)
-	if err != nil {
-		if errors.Is(err, ErrBadId) {
-		  errorReturn(w, err, http.StatusBadRequest, "Bad Request", "Bad or missing ID.")
-		  fmt.Println("Got bad request.")
-		} else if errors.Is(err, ErrNotFound) {
-		  errorReturn(w, err, http.StatusNotFound, "User not found", "User not found.")
-		  fmt.Println("User not found.")
-		} else {
-			errorReturn(w, err, http.StatusInternalServerError, "Server Error", "Internal server error.")
-		}
+	if handleUserError(w, err) {
 		return
 	}
 
@@ -180,16 +193,7 @@ func getUserHandler(w http.ResponseWriter, r *http.Request) {
 
 func replaceUserHandler(w http.ResponseWriter, r *http.Request) {
 	user, err := returnUser(r)
-	if err != nil {
-		if errors.Is(err, ErrBadId) {
-		  errorReturn(w, err, http.StatusBadRequest, "Bad Request", "Bad or missing ID.")
-		  fmt.Println("Got bad request.")
-		} else if errors.Is(err, ErrNotFound) {
-		  errorReturn(w, err, http.StatusNotFound, "User not found", "User not found.")
-		  fmt.Println("User not found.")
-		} else {
-			errorReturn(w, err, http.StatusInternalServerError, "Server Error", "Internal server error.")
-		}
+	if handleUserError(w, err) {
 		return
 	}
 
@@ -213,16 +217,7 @@ func replaceUserHandler(w http.ResponseWriter, r *http.Request) {
 
 func deleteUserHandler(w http.ResponseWriter, r *http.Request) {
 	user, err := returnUser(r)
-	if err != nil {
-		if errors.Is(err, ErrBadId) {
-		  errorReturn(w, err, http.StatusBadRequest, "Bad Request", "Bad or missing ID.")
-		  fmt.Println("Got bad request.")
-		} else if errors.Is(err, ErrNotFound) {
-		  errorReturn(w, err, http.StatusNotFound, "User not found", "User not found.")
-		  fmt.Println("User not found.")
-		} else {
-			errorReturn(w, err, http.StatusInternalServerError, "Server Error", "Internal server error.")
-		}
+	if handleUserError(w, err) {
 		return
 	}
 
@@ -230,7 +225,6 @@ func deleteUserHandler(w http.ResponseWriter, r *http.Request) {
 	defer mu.Unlock()
 	delete(users,user.Id)
 
-	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNoContent)
 	fmt.Println("Deleted user: ", user.Name)
 }

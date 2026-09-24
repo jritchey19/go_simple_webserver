@@ -138,12 +138,13 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 		var record User
 		err := json.NewDecoder(r.Body).Decode(&record)
 
-	  if handleUserError(w, err) {
+	  if err != nil{
+			handleUserError(w, ErrMalformed)
 		  return
 	  }
 
 		if len(record.Name) == 0 || len(record.Email) == 0 {
-			errorReturn(w, nil, http.StatusBadRequest, "Missing Input", "Name and Email are required.")
+			handleUserError(w, ErrMissingInfo)
 			return
 		} 
 
